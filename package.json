@@ -2,12 +2,9 @@
   "name": "discord-autoplay-mp4",
   "version": "1.0.0",
   "type": "module",
-  "main": "autoplay.js",
-  "scripts": {
-    "start": "node autoplay.js"
-  },
+  "scripts": { "start": "node autoplay.js" },
   "dependencies": {
-    "express": "^4.19.2",
+    "express": "^4.18.2",
     "node-fetch": "^3.3.2",
     "fluent-ffmpeg": "^2.1.2"
   }
