@@ -11,16 +11,14 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const streamPipeline = promisify(pipeline);
 
-// === Setup Directories ===
 const tempDir = "./temp";
 const outputDir = "./public";
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
 app.use(express.json());
-app.use(express.static(outputDir));
 
-// === Random User-Agents (helps bypass Imgur throttling) ===
+// === Random User-Agents to avoid Imgur throttling ===
 const userAgents = [
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
@@ -28,7 +26,7 @@ const userAgents = [
   "Mozilla/5.0 (iPhone; CPU iPhone OS 15_2 like Mac OS X)"
 ];
 
-// === Download MP4 file ===
+// === Download the video ===
 async function downloadToFile(url, dest) {
   const ua = userAgents[Math.floor(Math.random() * userAgents.length)];
   const res = await fetch(url, { headers: { "User-Agent": ua } });
@@ -37,7 +35,7 @@ async function downloadToFile(url, dest) {
   console.log(`✅ Downloaded: ${url}`);
 }
 
-// === Convert MP4 to autoplay-friendly format ===
+// === Convert to progressive MP4 (Discord autoplay-ready) ===
 async function convertToEmbed(inputPath, outputPath) {
   return new Promise((resolve, reject) => {
     ffmpeg(inputPath)
@@ -48,13 +46,13 @@ async function convertToEmbed(inputPath, outputPath) {
         "-movflags +faststart",
         "-vf", "fps=30,scale=iw:-2:flags=lanczos"
       ])
-      .save(outputPath)
       .on("end", () => resolve(outputPath))
-      .on("error", reject);
+      .on("error", reject)
+      .save(outputPath);
   });
 }
 
-// === Main API Endpoint ===
+// === /convert endpoint ===
 app.post("/convert", async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: "Missing URL" });
@@ -74,15 +72,47 @@ app.post("/convert", async (req, res) => {
 
     res.json({ success: true, url: publicUrl });
   } catch (err) {
-    console.error("❌ Conversion error:", err.message);
+    console.error("❌ Conversion error:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// === Health route for Render ===
+// === Serve MP4s with correct headers (for autoplay in Discord) ===
+app.get("/*.mp4", (req, res) => {
+  const filePath = path.join(outputDir, req.path);
+  if (!fs.existsSync(filePath)) return res.status(404).send("Not Found");
+
+  const stat = fs.statSync(filePath);
+  const range = req.headers.range;
+
+  res.setHeader("Accept-Ranges", "bytes");
+  res.setHeader("Content-Type", "video/mp4");
+
+  if (range) {
+    const [start, end] = range.replace(/bytes=/, "").split("-");
+    const chunkStart = parseInt(start, 10);
+    const chunkEnd = end ? parseInt(end, 10) : stat.size - 1;
+    const chunkSize = chunkEnd - chunkStart + 1;
+
+    const fileStream = fs.createReadStream(filePath, { start: chunkStart, end: chunkEnd });
+    res.writeHead(206, {
+      "Content-Range": `bytes ${chunkStart}-${chunkEnd}/${stat.size}`,
+      "Content-Length": chunkSize,
+      "Content-Type": "video/mp4"
+    });
+    fileStream.pipe(res);
+  } else {
+    res.writeHead(200, {
+      "Content-Length": stat.size,
+      "Content-Type": "video/mp4"
+    });
+    fs.createReadStream(filePath).pipe(res);
+  }
+});
+
+// === Health check for Render ===
 app.get("/", (req, res) => {
   res.send("✅ MP4 Autoplay Server is running!");
 });
 
-// === Start Server ===
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
